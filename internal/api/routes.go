@@ -32,6 +32,7 @@ func (api *API) routes() {
 	authV1 := router.Group("/v1/auth", authenticationMiddleware)
 	{
 		authV1.Post("/change-password", apiv1.ChangePassword(api.AuthService, api.logger))
+		authV1.Post("/reset-password", apiv1.ResetPassword(api.AuthService, api.logger))
 	}
 
 	usersV1 := router.Group("/v1/users", authenticationMiddleware)
@@ -73,6 +74,7 @@ func (api *API) routes() {
 		projectsV1.Get("/:projectID/test-case-template", apiv1.GetProjectTestCaseTemplate(api.ProjectsService, api.logger))
 		projectsV1.Post("/:projectID/test-case-template", apiv1.AddProjectTestCaseTemplate(api.ProjectsService, api.logger))
 		projectsV1.Post("/:projectID/automated-testing", apiv1.UpdateAutomatedTesting(api.ProjectsService, api.logger))
+		projectsV1.Get("/:projectID/summary", apiv1.GetProjectTestCasesSummary(api.TestCasesService, api.logger))
 	}
 
 	modulesV1 := router.Group("/v1/modules", authenticationMiddleware)
@@ -97,6 +99,8 @@ func (api *API) routes() {
 	meV1 := router.Group("/v1/me", authenticationMiddleware)
 	{
 		meV1.Get("/test-cases/inbox", apiv1.ListAssignedTestCases(api.TestCasesService, api.logger))
+		meV1.Get("/test-cases/inbox/unseen-count", apiv1.GetInboxUnseenCount(api.TestCasesService, api.logger))
+		meV1.Post("/test-cases/inbox/:testCaseID/view", apiv1.MarkInboxTestCaseViewed(api.TestCasesService, api.logger))
 		meV1.Get("/test-cases/summary", apiv1.GetExecutionSummary(api.TestCasesService, api.logger))
 	}
 
@@ -121,6 +125,9 @@ func (api *API) routes() {
 		testCasesV1.Post("/:test_case_id/execute", apiv1.ExecuteTestCase(api.TestCasesService, api.TestRunsService, api.logger, api.Config))
 		testCasesV1.Post("/:testCaseID/branch", apiv1.BranchTestCase(api.TestCasesService, api.logger))
 		testCasesV1.Post("/:testCaseID/transfer", apiv1.TransferTestCase(api.TestCasesService, api.logger))
+		testCasesV1.Get("/:testCaseID/relations", apiv1.ListTestCaseRelations(api.TestCaseRelationService, api.logger))
+		testCasesV1.Post("/:testCaseID/relations", apiv1.CreateTestCaseRelation(api.TestCaseRelationService, api.logger))
+		testCasesV1.Delete("/:testCaseID/relations/:relationID", apiv1.DeleteTestCaseRelation(api.TestCaseRelationService, api.logger))
 	}
 
 	testPlansV1 := router.Group("/v1/test-plans", authenticationMiddleware)
@@ -139,6 +146,7 @@ func (api *API) routes() {
 		testPlansV1.Post("/:testPlanID/environment", apiv1.ChangeEnvironment(api.TestPlansService, api.logger))
 
 		testPlansV1.Post("/:testPlanID/test-cases/batch", apiv1.BatchAssignTestCasesToPlan(api.TestPlansService, api.logger))
+		testPlansV1.Post("/:testPlanID/test-cases/:testCaseID/urgency", apiv1.UpdateTestPlanCaseUrgency(api.TestPlansService, api.logger))
 
 		commentsV1 := testPlansV1.Group("/:testPlanID/comments")
 		{

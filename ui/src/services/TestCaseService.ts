@@ -6,6 +6,12 @@ export function useTestCasesQuery() {
   return $api.useQuery("get", "/v1/test-cases");
 }
 
+export function useProjectTestersQuery(projectID: string) {
+  return $api.useQuery("get", "/v1/projects/{projectID}/testers", {
+    params: { path: { projectID: Number(projectID) } },  
+  });
+}
+
 export function useTestCaseQuery(testCaseID: string) {
   return $api.useQuery("get", "/v1/test-cases/{testCaseID}", {
     params: { path: { testCaseID } },
@@ -20,6 +26,23 @@ export function useProjectTestCasesQuery(projectID: string) {
   return $api.useQuery("get", "/v1/projects/{projectID}/test-cases", {
     params: { path: { projectID } },
   });
+}
+
+export function useTestCaseRelationsQuery(testCaseID: string) {
+  return $api.useQuery("get", "/v1/test-cases/{testCaseID}/relations", {
+    params: { path: { testCaseID } },
+  });
+}
+
+export function useCreateTestCaseRelationMutation() {
+  return $api.useMutation("post", "/v1/test-cases/{testCaseID}/relations");
+}
+
+export function useDeleteTestCaseRelationMutation() {
+  return $api.useMutation(
+    "delete",
+    "/v1/test-cases/{testCaseID}/relations/{relationID}",
+  );
 }
 
 export async function getTestCases() {
@@ -39,6 +62,16 @@ export async function getInboxTestCases(params?: {
         pageSize: params?.pageSize ?? 10,
       },
     },
+  });
+}
+
+export async function getInboxUnseenCount() {
+  return apiClient.request("get", "/v1/me/test-cases/inbox/unseen-count");
+}
+
+export async function markInboxTestCaseViewed(testCaseID: string) {
+  return apiClient.request("post", "/v1/me/test-cases/inbox/{testCaseID}/view", {
+    params: { path: { testCaseID } },
   });
 }
 

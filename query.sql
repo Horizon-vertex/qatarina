@@ -142,6 +142,7 @@ SELECT
   tc.feature_or_module,
   tc.title,
   tc.description,
+  tc.preconditions,
   tc.is_draft,
   tc.tags,
   tc.created_at,
@@ -149,6 +150,7 @@ SELECT
   tc.runner,
   tc.script_path,
   tc.parent_test_case_id,
+  tc.priority,
   parent.code AS parent_code,
   parent.title AS parent_title
 FROM test_cases tc
@@ -161,12 +163,16 @@ SELECT * FROM test_cases WHERE project_id = $1;
 -- name: ListTestCasesByPlan :many
 SELECT
   tc.id,
+  tc.code,
   tc.title,
+  tc.priority,
+  MAX(pc.urgency)::priority_level AS urgency,
   array_agg(pc.assigned_to_id)::bigint[] AS assigned_tester_ids
 FROM test_cases tc
 INNER JOIN test_plan_cases pc ON pc.test_case_id = tc.id
 WHERE pc.test_plan_id = $1
-GROUP BY tc.id, tc.title;
+GROUP BY tc.id, tc.code, tc.title, tc.priority
+ORDER BY MAX(pc.urgency) DESC, tc.priority DESC, tc.code ASC;
 
 -- name: ListScriptTestCasesByPlan :many
 SELECT tc.*
@@ -264,11 +270,13 @@ WHERE p.project_id IS NULL;
 -- name: CreateTestCase :one
 INSERT INTO test_cases (
     id, kind, code, feature_or_module, title, description, parent_test_case_id,
-    is_draft, tags, created_by_id, created_at, updated_at, project_id, suggested, runner, script_path
+    is_draft, tags, created_by_id, created_at, updated_at, project_id, suggested, runner, script_path,
+    priority, preconditions
 )
 VALUES (
     $1, $2, $3, $4, $5, $6, $7,
-    $8, $9, $10, $11, $12, $13, $14, $15, $16
+    $8, $9, $10, $11, $12, $13, $14, $15, $16,
+    $17, $18
 )
 RETURNING id;
 
@@ -302,7 +310,8 @@ WHERE tc.project_id = sqlc.arg(project_id)
 SELECT COUNT(*)
 FROM test_cases
 WHERE project_id = sqlc.arg(project_id)
-  AND (suggested IS NULL OR suggested = false);
+  AND (suggested IS NULL OR suggested = false)
+  AND (sqlc.arg(search)::text = '' OR title ILIKE '%' || sqlc.arg(search)::text || '%' OR code ILIKE '%' || sqlc.arg(search)::text || '%');
 
 -- name: TestCaseListByAssignedUser :many
 SELECT
@@ -312,6 +321,7 @@ SELECT
   tc.feature_or_module,
   tc.title,
   tc.description,
+  tc.preconditions,
   tc.is_draft,
   tc.tags,
   tc.created_by_id,
@@ -321,13 +331,17 @@ SELECT
   MAX(pc.test_plan_id)::int AS test_plan_id,
   MAX(pc.assigned_to_id)::int AS assigned_to_id,
   COALESCE(MAX(tp.environment_id), 0)::int AS environment_id,
-  COALESCE(BOOL_OR(tr.is_closed), false)::boolean AS is_closed
+  COALESCE(BOOL_OR(tr.is_closed), false)::boolean AS is_closed,
+  BOOL_AND(pc.viewed_at IS NOT NULL)::boolean AS is_viewed,
+  tc.priority,
+  MAX(pc.urgency)::priority_level AS urgency
 FROM test_cases tc
 INNER JOIN test_plan_cases pc ON pc.test_case_id = tc.id
 INNER JOIN test_plans tp ON tp.id = pc.test_plan_id
 LEFT JOIN test_runs tr ON tr.test_case_id = tc.id AND tr.test_plan_id = pc.test_plan_id
 WHERE pc.assigned_to_id = sqlc.arg(user_id)
   AND (sqlc.arg(include_closed)::bool = true OR COALESCE(tr.is_closed, false) = false)
+  AND (sqlc.arg(projects)::int[] IS NULL OR tr.project_id = ANY(sqlc.arg(projects)::int[]))
 GROUP BY tc.id
 ORDER BY tc.created_at DESC
 LIMIT sqlc.arg(row_limit)::int OFFSET sqlc.arg(row_offset)::int;
@@ -344,11 +358,32 @@ FROM (
   HAVING sqlc.arg(include_closed)::bool = true OR COALESCE(BOOL_OR(tr.is_closed), false)::boolean = false
 ) sub;
 
+-- name: TestCaseCountUnseenByAssignedUser :one
+SELECT COUNT(*)
+FROM (
+  SELECT tc.id
+  FROM test_cases tc
+  INNER JOIN test_plan_cases pc ON pc.test_case_id = tc.id
+  LEFT JOIN test_runs tr ON tr.test_case_id = tc.id AND tr.test_plan_id = pc.test_plan_id
+  WHERE pc.assigned_to_id = sqlc.arg(user_id)
+  GROUP BY tc.id
+  HAVING COALESCE(BOOL_OR(tr.is_closed), false)::boolean = false
+    AND BOOL_OR(pc.viewed_at IS NULL)
+) sub;
+
+-- name: MarkAssignedTestCaseViewed :exec
+UPDATE test_plan_cases
+SET viewed_at = now()
+WHERE test_case_id = sqlc.arg(test_case_id)
+  AND assigned_to_id = sqlc.arg(user_id)
+  AND viewed_at IS NULL;
+
 -- name: TestCaseListByProjectPaged :many
 SELECT *
 FROM test_cases
 WHERE project_id = sqlc.arg(project_id)
   AND (suggested IS NULL OR suggested = false)
+  AND (sqlc.arg(search)::text = '' OR title ILIKE '%' || sqlc.arg(search)::text || '%' OR code ILIKE '%' || sqlc.arg(search)::text || '%')
 ORDER BY created_at DESC
 LIMIT sqlc.arg(row_limit)::int OFFSET sqlc.arg(row_offset)::int;
 
@@ -382,7 +417,9 @@ is_draft = $7,
 tags = $8,
 updated_at = $9,
 runner = $10,
-script_path = $11
+script_path = $11,
+priority = $12,
+preconditions = $13
 WHERE id = $1;
 
 -- name: GetTestCaseByCode :one
@@ -399,13 +436,14 @@ SELECT * FROM test_cases WHERE project_id = $1 AND suggested = $2;
 
 -- name: UpdateSuggestedFlag :exec
 UPDATE test_cases SET suggested = $2 WHERE id = $1;
+
 -- name: ListTestPlans :many
 SELECT * FROM test_plans ORDER BY created_at DESC;
 
 -- name: TransferTestCase :exec
-UPDATE test_cases 
-SET project_id = $2, 
-    code = $3, 
+UPDATE test_cases
+SET project_id = $2,
+    code = $3,
     feature_or_module = $4,
     updated_at = NOW()
 WHERE id = $1;
@@ -446,9 +484,24 @@ updated_at = $2
 WHERE id = $1;
 
 -- name: AddTestCaseToPlan :exec
-INSERT INTO test_plan_cases (test_plan_id, test_case_id, assigned_to_id)
-VALUES ($1, $2, $3)
+INSERT INTO test_plan_cases (test_plan_id, test_case_id, assigned_to_id, urgency)
+VALUES (
+    sqlc.arg(test_plan_id), sqlc.arg(test_case_id), sqlc.arg(assigned_to_id),
+    COALESCE(
+        sqlc.narg(urgency)::priority_level,
+        (SELECT pc.urgency FROM test_plan_cases pc
+         WHERE pc.test_plan_id = sqlc.arg(test_plan_id) AND pc.test_case_id = sqlc.arg(test_case_id)
+         LIMIT 1),
+        'medium'
+    )
+)
 ON CONFLICT DO NOTHING;
+
+-- name: UpdateTestPlanCaseUrgency :execrows
+UPDATE test_plan_cases
+SET urgency = sqlc.arg(urgency)
+WHERE test_plan_id = sqlc.arg(test_plan_id)
+  AND test_case_id = sqlc.arg(test_case_id);
 
 -- name: ChangeEnvironment :exec
 UPDATE test_plans
@@ -559,6 +612,7 @@ INSERT INTO project_testers (
 ) VALUES (
     $1, $2, $3, $4, now(), now()
 );
+
 -- name: SearchProjectTesters :many
 SELECT
 project_testers.*,
@@ -611,8 +665,8 @@ WHERE project_id = $1;
 
 -- name: CreateProjectModules :one
 INSERT INTO modules(
-    project_id, name, code, priority, type, description, created_at, updated_at
-)VALUES($1, $2, $3, $4, $5, $6, now(), now()
+    project_id, name, code, priority, type, description, parent_module_id, created_at, updated_at
+)VALUES($1, $2, $3, $4, $5, $6, $7, now(), now()
 )
 RETURNING *;
 
@@ -625,7 +679,7 @@ SELECT * FROM modules
 ORDER BY created_at DESC;
 
 -- name: UpdateProjectModule :exec
-UPDATE modules SET name = $2, code = $3, priority = $4, type = $5, description = $6
+UPDATE modules SET name = $2, code = $3, priority = $4, type = $5, description = $6, parent_module_id = $7, updated_at = now()
 WHERE id = $1;
 
 -- name: DeleteProjectModule :execrows
@@ -634,6 +688,35 @@ DELETE FROM modules WHERE id = $1;
 -- name: GetProjectModules :many
 SELECT * FROM modules
 WHERE project_id = $1;
+
+-- name: GetModuleDepth :one
+-- Returns the level of a module in its hierarchy, where top-level modules are at level 1
+WITH RECURSIVE ancestors AS (
+    SELECT m.id, m.parent_module_id, 1 AS level
+    FROM modules m
+    WHERE m.id = $1
+    UNION ALL
+    SELECT p.id, p.parent_module_id, a.level + 1
+    FROM modules p
+    INNER JOIN ancestors a ON p.id = a.parent_module_id
+    WHERE a.level < 100
+)
+SELECT MAX(level)::integer AS depth FROM ancestors;
+
+-- name: GetModuleDescendants :many
+-- Returns all modules below the given module, with their level relative to it (children are at level 1)
+WITH RECURSIVE descendants AS (
+    SELECT m.id, 1 AS level
+    FROM modules m
+    WHERE m.parent_module_id = $1
+    UNION ALL
+    SELECT c.id, d.level + 1
+    FROM modules c
+    INNER JOIN descendants d ON c.parent_module_id = d.id
+    WHERE d.level < 100
+)
+SELECT id::integer AS id, level::integer AS level FROM descendants;
+
 -- name: CreatePage :one
 INSERT INTO pages(parent_page_id, page_version, org_id, project_id, code, title, file_path, content, page_type, mime_type, has_embedded_media, external_content_url, notion_url, last_edited_by, created_by, created_at, updated_at, deleted_at
 ) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now(), now(), now()) RETURNING *;
@@ -663,6 +746,20 @@ SELECT COUNT(DISTINCT user_id) FROM project_testers WHERE project_id = $1 AND is
 
 -- name: GetTestCaseCount :one
 SELECT COUNT(*) FROM test_cases;
+
+-- name: CountTestCasesByProject :one
+SELECT COUNT(*) FROM test_cases WHERE project_id = $1;
+
+-- name: CountCompletedTestCasesByProject :one
+SELECT COUNT(DISTINCT tc.id)
+FROM test_cases tc
+JOIN test_runs tr ON tr.test_case_id = tc.id
+WHERE tc.project_id = $1;
+
+-- name: CountTestRunsByResultState :one
+SELECT COUNT(*)
+FROM test_runs
+WHERE project_id = $1 AND result_state = $2;
 
 -- name: GetTestCasesWithTestersByPlan :many
 SELECT
@@ -771,11 +868,11 @@ SELECT * FROM environments WHERE project_id = $1 ORDER BY name;
 -- name: GetEnvironment :one
 SELECT * FROM environments WHERE id = $1;
 
--- name: DeleteEnvironment :exec
+-- name: DeleteEnvironment :execrows
 DELETE FROM environments WHERE id = $1 AND project_id = $2;
 
--- name: UpdateEnvironment :exec
-UPDATE environments SET name = $1, base_url = $2, description = $3 WHERE id = $4 AND project_id = $5;
+-- name: UpdateEnvironment :execrows
+UPDATE environments SET name = $1, base_url = $2, description = $3, updated_at = now() WHERE id = $4 AND project_id = $5;
 
 -- name: ListReportsByProject :many
 SELECT * FROM reports WHERE project_id = $1 ORDER BY created_at DESC;
@@ -806,12 +903,12 @@ SELECT
 FROM reports WHERE project_id = $1;
 
 -- name: ListCommentsByTestPlan :many
-SELECT 
+SELECT
     c.id,
     c.test_plan_id,
     c.parent_comment_id,
     c.user_id,
-    u.display_name,   
+    u.display_name,
     c.content,
     c.created_at,
     c.updated_at
@@ -821,7 +918,7 @@ WHERE c.test_plan_id = $1
 ORDER BY c.created_at DESC;
 
 -- name: GetComment :one
-SELECT 
+SELECT
     c.id,
     c.test_plan_id,
     c.parent_comment_id,
@@ -837,7 +934,7 @@ WHERE c.id = $1;
 -- name: CreateComment :one
 INSERT INTO test_plan_comments (id, test_plan_id, parent_comment_id, user_id, content, created_at, updated_at)
 VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
-RETURNING 
+RETURNING
     id,
     test_plan_id,
     parent_comment_id,
@@ -854,8 +951,8 @@ INSERT INTO test_cases (
     id, project_id, created_by_id, kind, code, title, description,
     is_draft, created_at, updated_at
 )
-SELECT 
-    sqlc.arg(new_test_id)::uuid,  
+SELECT
+    sqlc.arg(new_test_id)::uuid,
     tp.project_id,
     c.user_id,
     'comment-derived',
@@ -869,3 +966,38 @@ FROM test_plan_comments c
 JOIN test_plans tp ON tp.id = c.test_plan_id
 WHERE c.id = $1
 RETURNING id;
+
+-- name: CreateTestCaseRelation :one
+INSERT INTO test_case_relations (
+    id, test_case_id, related_test_case_id, relation_kind, created_by_id, created_at, updated_at
+)
+VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+RETURNING id;
+
+-- name: ListTestCaseRelations :many
+-- Relations in both directions; "other" is the test case on the opposite side to test_case_id
+SELECT
+  r.id,
+  r.test_case_id,
+  r.related_test_case_id,
+  r.relation_kind,
+  r.created_by_id,
+  r.created_at,
+  r.updated_at,
+  (r.test_case_id = sqlc.arg(test_case_id))::boolean AS is_outgoing,
+  o.id AS other_id,
+  o.code AS other_code,
+  o.title AS other_title,
+  o.project_id AS other_project_id
+FROM test_case_relations r
+INNER JOIN test_cases o ON o.id = CASE
+  WHEN r.test_case_id = sqlc.arg(test_case_id) THEN r.related_test_case_id
+  ELSE r.test_case_id
+END
+WHERE r.test_case_id = sqlc.arg(test_case_id) OR r.related_test_case_id = sqlc.arg(test_case_id)
+ORDER BY r.created_at, r.id;
+
+-- name: DeleteTestCaseRelation :execrows
+DELETE FROM test_case_relations
+WHERE id = sqlc.arg(id)
+  AND (test_case_id = sqlc.arg(test_case_id) OR related_test_case_id = sqlc.arg(test_case_id));

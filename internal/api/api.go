@@ -11,24 +11,25 @@ import (
 )
 
 type API struct {
-	logger                logging.Logger
-	app                   *fiber.App
-	Config                *config.Config
-	RiverClient           *river.Client[pgx.Tx]
-	AuthService           services.AuthService
-	UserService           services.UserService
-	ProjectsService       services.ProjectService
-	TestCasesService      services.TestCaseService
-	TestPlansService      services.TestPlanService
-	TestRunsService       services.TestRunService
-	TesterService         services.TesterService
-	ModuleService         services.ModuleService
-	PageService           services.PageService
-	DashboardService      services.DashboardService
-	TestCaseImportService services.TestCaseImportService
-	OrgService            services.OrgService
-	EnvironmentService    services.EnvironmentService
-	ReportService         services.ReportService
+	logger                  logging.Logger
+	app                     *fiber.App
+	Config                  *config.Config
+	RiverClient             *river.Client[pgx.Tx]
+	AuthService             services.AuthService
+	UserService             services.UserService
+	ProjectsService         services.ProjectService
+	TestCasesService        services.TestCaseService
+	TestCaseRelationService services.TestCaseRelationService
+	TestPlansService        services.TestPlanService
+	TestRunsService         services.TestRunService
+	TesterService           services.TesterService
+	ModuleService           services.ModuleService
+	PageService             services.PageService
+	DashboardService        services.DashboardService
+	TestCaseImportService   services.TestCaseImportService
+	OrgService              services.OrgService
+	EnvironmentService      services.EnvironmentService
+	ReportService           services.ReportService
 }
 
 func NewAPI(config *config.Config) *API {
@@ -37,28 +38,29 @@ func NewAPI(config *config.Config) *API {
 	dbConn := dbsqlc.New(rawDB)
 	logger := logging.NewFromConfig(&config.Logging)
 
-	moduleService := services.NewModuleService(dbConn)
+	moduleService := services.NewModuleService(dbConn, config.Platform.GetMaxModuleDepth())
 	projectService := services.NewProjectService(dbConn, logger, moduleService)
 	environmentService := services.NewEnvironmentService(dbConn)
 	reportService := services.NewReportService(rawDB.DB, dbConn, logger)
 
 	return &API{
-		logger:                logger,
-		app:                   fiber.New(),
-		Config:                config,
-		AuthService:           services.NewAuthService(&config.Auth, dbConn, logger),
-		ProjectsService:       projectService,
-		TestCasesService:      services.NewTestCaseService(rawDB.DB, dbConn, logger),
-		TestPlansService:      services.NewTestPlanService(dbConn, logger),
-		TestRunsService:       services.NewTestRunService(rawDB.DB, dbConn, logger),
-		UserService:           services.NewUserService(dbConn, logger, config.SMTP),
-		TesterService:         services.NewTesterService(dbConn, logger),
-		ModuleService:         moduleService,
-		DashboardService:      services.NewDashboardService(dbConn, logger),
-		TestCaseImportService: services.NewTestCaseImportService(projectService, logger, config.ImportFile),
-		OrgService:            services.NewOrgService(dbConn, logger),
-		EnvironmentService:    environmentService,
-		ReportService:         reportService,
+		logger:                  logger,
+		app:                     fiber.New(),
+		Config:                  config,
+		AuthService:             services.NewAuthService(&config.Auth, dbConn, logger),
+		ProjectsService:         projectService,
+		TestCasesService:        services.NewTestCaseService(rawDB.DB, dbConn, logger),
+		TestCaseRelationService: services.NewTestCaseRelationService(dbConn, logger),
+		TestPlansService:        services.NewTestPlanService(dbConn, logger),
+		TestRunsService:         services.NewTestRunService(rawDB.DB, dbConn, logger),
+		UserService:             services.NewUserService(dbConn, logger, config.SMTP),
+		TesterService:           services.NewTesterService(dbConn, logger),
+		ModuleService:           moduleService,
+		DashboardService:        services.NewDashboardService(dbConn, logger),
+		TestCaseImportService:   services.NewTestCaseImportService(projectService, logger, config.ImportFile),
+		OrgService:              services.NewOrgService(dbConn, logger),
+		EnvironmentService:      environmentService,
+		ReportService:           reportService,
 	}
 }
 

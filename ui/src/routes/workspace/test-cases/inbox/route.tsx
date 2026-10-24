@@ -1,4 +1,6 @@
+import { PriorityBadge } from "@/components/PriorityBadge";
 import {
+  findInboxUnseenCountQueryOptions,
   findTestCaseInboxQueryOptions,
   findTestCaseSummaryQueryOptions,
 } from "@/data/queries/test-cases";
@@ -14,7 +16,7 @@ import {
   Button,
 } from "@chakra-ui/react";
 import { Checkbox } from "@/components/ui/checkbox";
-import { useSuspenseQuery } from "@tanstack/react-query";
+import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, Outlet } from "@tanstack/react-router";
 import { findProjectsQueryOptions } from "@/data/queries/projects";
 import React, { useState } from "react";
@@ -46,7 +48,9 @@ function TestCasePageInbox() {
   } = useSuspenseQuery(findTestCaseInboxQueryOptions(includeClosed, page, pageSize));
 
   const testCases = testCasesResponse?.test_cases ?? [];
-  const pagination = (testCasesResponse as any)?.pagination;
+  const { data: unseenCount = 0 } = useQuery(findInboxUnseenCountQueryOptions);
+  const pagination = testCasesResponse?.pagination;
+  const totalCount = pagination?.total ?? testCases.length;
 
   const { data: projects } = useSuspenseQuery(findProjectsQueryOptions);
   const projectMap: Record<number, string> = {};
@@ -216,9 +220,24 @@ function TestCasePageInbox() {
           flexDirection="column"
         >
           <Box p={4} borderBottom="sm" borderColor="border.subtle">
-            <Heading size="md" color="fg.heading">
-              Test Case Inbox
-            </Heading>
+            <Flex align="center" gap={2}>
+              <Heading size="md" color="fg.heading">
+                Test Case Inbox
+              </Heading>
+              <Badge
+                colorPalette="brand"
+                variant="subtle"
+                rounded="full"
+                title={includeClosed ? "All test cases in your inbox" : "Open test cases in your inbox"}
+              >
+                {totalCount} {totalCount === 1 ? "test case" : "test cases"}
+              </Badge>
+              {unseenCount > 0 && (
+                <Badge colorPalette="danger" variant="solid" rounded="full">
+                  {unseenCount} unseen
+                </Badge>
+              )}
+            </Flex>
 
             <Flex mt={3} gap={2}>
               <Button
@@ -302,6 +321,12 @@ function TestCasePageInbox() {
                 </Button>
               </Box>
             </Flex>
+
+            {isFiltered && (
+              <Text mt={2} fontSize="xs" color="fg.subtle">
+                Showing {filteredTestCases.length} of {testCases.length} test cases on this page
+              </Text>
+            )}
           </Box>
 
           <Box flex="1" overflowY="auto">
@@ -334,7 +359,8 @@ function TestCasePageInbox() {
                           pl={5}
                           borderBottom="sm"
                           borderColor="border.subtle"
-                          _hover={{ bg: "bg.subtle", cursor: "pointer" }}
+                          bg={tc.is_viewed ? undefined : "bg.subtle"}
+                          _hover={{ bg: tc.is_viewed ? "bg.subtle" : "bg.muted", cursor: "pointer" }}
                           opacity={tc.is_closed ? 0.5 : 1}
                         >
                           <Link
@@ -343,14 +369,26 @@ function TestCasePageInbox() {
                             title={tc.description ?? ""}
                           >
                             <Flex direction="column">
-                              <Text fontWeight="semibold" fontSize="sm">
-                                {tc.title}
-                              </Text>
+                              <Flex align="center" gap={2}>
+                                {!tc.is_viewed && (
+                                  <Box w={2} h={2} rounded="full" bg="brand.solid" flexShrink={0} />
+                                )}
+                                <Text fontWeight={tc.is_viewed ? "semibold" : "bold"} fontSize="sm">
+                                  {tc.title}
+                                </Text>
+                                {!tc.is_viewed && (
+                                  <Badge colorPalette="brand" variant="subtle" size="xs">
+                                    New
+                                  </Badge>
+                                )}
+                              </Flex>
                               <Text fontSize="xs" color="fg.subtle">
                                 {projectMap[tc.project_id ?? -1] ?? "Unknown Project"}
                               </Text>
                             </Flex>
-                            <Stack direction="row" mt={2} gap={2}>
+                            <Stack direction="row" mt={2} gap={2} flexWrap="wrap">
+                              <PriorityBadge value={tc.priority} label="Priority" />
+                              <PriorityBadge value={tc.urgency} label="Urgency" />
                               <Badge colorPalette="info" variant="subtle">
                                 {counts.usage_count} tests performed
                               </Badge>
@@ -386,7 +424,8 @@ function TestCasePageInbox() {
                       p={3}
                       borderBottom="sm"
                       borderColor="border.subtle"
-                      _hover={{ bg: "bg.subtle", cursor: "pointer" }}
+                      bg={tc.is_viewed ? undefined : "bg.subtle"}
+                      _hover={{ bg: tc.is_viewed ? "bg.subtle" : "bg.muted", cursor: "pointer" }}
                       opacity={tc.is_closed ? 0.5 : 1}
                     >
                       <Link
@@ -395,14 +434,26 @@ function TestCasePageInbox() {
                         title={tc.description ?? ""}
                       >
                         <Flex direction="column">
-                          <Text fontWeight="semibold" fontSize="sm">
-                            {tc.title}
-                          </Text>
+                          <Flex align="center" gap={2}>
+                            {!tc.is_viewed && (
+                              <Box w={2} h={2} rounded="full" bg="brand.solid" flexShrink={0} />
+                            )}
+                            <Text fontWeight={tc.is_viewed ? "semibold" : "bold"} fontSize="sm">
+                              {tc.title}
+                            </Text>
+                            {!tc.is_viewed && (
+                              <Badge colorPalette="brand" variant="subtle" size="xs">
+                                New
+                              </Badge>
+                            )}
+                          </Flex>
                           <Text fontSize="xs" color="fg.subtle">
                             {projectMap[tc.project_id ?? -1] ?? "Unknown Project"}
                           </Text>
                         </Flex>
-                        <Stack direction="row" mt={2} gap={2}>
+                        <Stack direction="row" mt={2} gap={2} flexWrap="wrap">
+                          <PriorityBadge value={tc.priority} label="Priority" />
+                          <PriorityBadge value={tc.urgency} label="Urgency" />
                           <Badge colorPalette="info" variant="subtle">
                             {counts.usage_count} tests performed
                           </Badge>
